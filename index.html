@@ -517,10 +517,10 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
     <div class="setsec" id="cloudSec">
       <h3>☁️ 云端保存 · 多设备共用</h3>
       <div class="note">
-        不填账号、不要令牌，只填一个「存储地址」就行。地址填好之后：当天打卡完成点「保存今日打卡」→ 弹一道三年级算术题 → 答对才提交；哪台设备最后提交，云端当天就以此为准，其它日期不动。打开页面会自动读云端：本机今天已有记录就以本机为准，本机今天空着就用云端今天的数据。改以前的日期，用下面的「历史补录」。
+        <b>已经内置好一个可用的存储地址，开箱即用，不用你去配置。</b>当天打卡完成点「保存今日打卡」→ 弹一道三年级算术题 → 答对才提交；哪台设备最后提交，云端当天就以此为准，其它日期不动。打开页面会自动读云端：本机今天已有记录就以本机为准，本机今天空着就用云端今天的数据。改以前的日期，用下面的「历史补录」。
       </div>
       <div class="form" style="margin-top:10px">
-        <div class="field" style="grid-column:1/-1"><label>存储地址（GET 读 / PUT 写 的 JSON 地址）</label><input id="cyEndpoint" placeholder="https://getpantry.cloud/apiv1/pantry/xxxx/basket/growth" autocomplete="off"></div>
+        <div class="field" style="grid-column:1/-1"><label>存储地址（默认已填好；想换成自己的再改）</label><input id="cyEndpoint" placeholder="https://getpantry.cloud/apiv1/pantry/xxxx/basket/growth" autocomplete="off"></div>
       </div>
       <div class="btnrow">
         <button class="btn pri" id="btnSyncSave">保存这个地址</button>
@@ -530,11 +530,8 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
       </div>
       <div class="note" id="cyStatus" style="margin-top:10px">—</div>
       <div class="note" style="margin-top:8px">
-        <b>怎么免费拿地址（30 秒，不用注册）：</b><br>
-        1. 打开 getpantry.cloud，填任意邮箱，勾选人机验证，点「Create a Pantry」，给 pantry 起个名；<br>
-        2. 创建成功后会给你一串 Pantry ID（UUID 形式）；<br>
-        3. 把地址拼成：<span style="word-break:break-all">https://getpantry.cloud/apiv1/pantry/&lt;那串ID&gt;/basket/growth</span>，粘到上面保存即可。免费额度是 100 个篮子、每篮 1.44 MB，足够用。<br>
-        也支持 api.restful-api.dev 的对象地址，或任何「GET 返回 JSON、PUT 覆盖 JSON」的自建地址。
+        <b>这个地址是什么：</b>getpantry.cloud 的免费公开篮子（100 个篮子、每篮 1.44 MB、不注册、不要令牌）。同一地址填到每台设备就共用同一份数据；记录谁都能读，不存敏感内容。<br>
+        <b>想换成自己的篮子：</b>打开 getpantry.cloud → 填任意邮箱 → 勾人机验证 → 「Create a Pantry」起个名 → 把返回的 ID 拼成 <span style="word-break:break-all">https://getpantry.cloud/apiv1/pantry/&lt;ID&gt;/basket/growth</span> 填进来保存即可。也兼容 api.restful-api.dev 的对象地址，或任何「GET 返回 JSON、PUT 覆盖 JSON」的地址。免费服务偶发「请求太频繁」，页面会自动重试一次。
       </div>
     </div>
 
@@ -730,8 +727,9 @@ function load(){
    2.5 云端保存（公开免费存储，不用账号令牌）
    ========================================================= */
 const SYNC_KEY = 'growth-plan-sync-v2';
+const DEFAULT_EP = 'https://getpantry.cloud/apiv1/pantry/155fa7ac-8e65-4285-9837-e0530f93a220/basket/growth';
 const syncCfg = {
-  endpoint: '',
+  endpoint: DEFAULT_EP,
   lastSave: 0, lastSaveDate: ''
 };
 let syncBusy = false;
@@ -748,6 +746,8 @@ function loadSyncCfg(){
   try {
     const raw = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
     if (raw) Object.assign(syncCfg, raw);
+    /* 旧配置（空地址 / 已失效的演示地址）换成现在这个可用地址 */
+    if (!syncCfg.endpoint || /restful-api\.dev/i.test(syncCfg.endpoint)) syncCfg.endpoint = DEFAULT_EP;
   } catch(e){}
 }
 function saveSyncCfg(){
@@ -766,13 +766,33 @@ function syncError(status){
   if (status >= 500) return '云端服务暂时不可用';
   return 'HTTP ' + status;
 }
+/* 免费存储会限流（跨域预检也可能被限），所以失败就等几秒再试，最多 4 次 */
+async function fetchWithRetry(url, opt, tries){
+  const n = tries || 4;
+  let last = null;
+  for (let i = 0; i < n; i++){
+    try {
+      last = await fetch(url, opt);
+    } catch(e){
+      if (i === n - 1) throw e;
+      await new Promise(s => setTimeout(s, 3000 + i * 2000));
+      continue;
+    }
+    if (last.status !== 429) return last;
+    await new Promise(s => setTimeout(s, 2500 + i * 1500));
+  }
+  return last;
+}
 async function fetchRemote(){
   const kind = epKind();
   if (kind === 'none') throw new Error('还没填云端地址');
-  const r = await fetch(syncCfg.endpoint, { cache: 'no-store' });
+  const r = await fetchWithRetry(syncCfg.endpoint, { cache: 'no-store' });
   if (r.status === 404) return null;
-  if (!r.ok) throw new Error('读取失败：' + syncError(r.status));
   const text = await r.text();
+  if (!r.ok){
+    if (r.status === 400 && /does not exist/i.test(text)) return null;
+    throw new Error('读取失败：' + syncError(r.status));
+  }
   let j = null;
   try { j = text ? JSON.parse(text) : null; } catch(e){ j = null; }
   const d = kind === 'restful' ? (j && j.data) : j;
@@ -785,11 +805,16 @@ async function putRemote(payload){
   const body = kind === 'restful'
     ? JSON.stringify({ name: 'growth-plan-ben', data: payload })
     : JSON.stringify(payload);
-  const r = await fetch(syncCfg.endpoint, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body
-  });
+  const opt = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
+  let r = await fetchWithRetry(syncCfg.endpoint, opt);
+  if (!r.ok && kind === 'pantry' && r.status === 400){
+    /* 篮子还不存在：先创建再写一次 */
+    const t0 = await r.text();
+    if (/does not exist/i.test(t0)){
+      await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
+      r = await fetchWithRetry(syncCfg.endpoint, opt);
+    }
+  }
   if (!r.ok){
     const t = await r.text();
     throw new Error('保存失败：' + syncError(r.status) + (t ? ' · ' + t.slice(0, 80) : ''));
