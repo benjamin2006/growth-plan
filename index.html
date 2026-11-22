@@ -225,6 +225,11 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
 .form.cols3{grid-template-columns:1.4fr .7fr .8fr}
 .chkline{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);cursor:pointer}
 .chkline input{width:16px;height:16px;accent-color:#3b82f6}
+.histlist{display:flex;flex-direction:column;gap:5px;max-height:380px;overflow:auto;margin-top:8px;padding-right:2px}
+.histcat{font-size:11.5px;font-weight:700;color:var(--blue);margin-top:6px}
+.histrow{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fbfdff;border:1px solid var(--line2);border-radius:9px;padding:7px 10px;font-size:12.5px;cursor:pointer}
+.histrow .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.histrow input{width:16px;height:16px;accent-color:#3b82f6;flex:0 0 auto}
 .field{display:flex;flex-direction:column;gap:5px}
 .field label{font-size:11.5px;color:var(--muted);font-weight:600}
 .field input,.field select{
@@ -367,6 +372,13 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
       <h3>💡 今天只改一件事</h3>
       <div class="tip" id="oneThing">先记录下来，复盘时会给出针对性建议。</div>
     </div>
+
+    <div class="card" style="margin-top:12px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <button class="btn pri" id="btnSaveToday" style="flex:0 0 auto">💾 保存今日打卡</button>
+        <div class="note" id="saveHint" style="margin:0;flex:1 1 200px">未配置云端，去设置页填一次令牌。</div>
+      </div>
+    </div>
   </section>
 
   <!-- ================= 一周 ================= -->
@@ -503,9 +515,9 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
     </div>
 
     <div class="setsec" id="cloudSec">
-      <h3>☁️ 云同步 · 存到 GitHub 仓库</h3>
+      <h3>☁️ 云端保存 · GitHub</h3>
       <div class="note">
-        把打卡数据写进仓库里的一个 JSON 文件，手机打卡、电脑看复盘都能拉到同一份。只同步打卡、情绪、兑换记录和设置；附件（截图、照片）不同步。
+        不会自动提交。当天打卡完成后，点一次「保存今日打卡」提交积分；哪台设备最后提交，云端当天的记录就以哪份为准。今天的打卡记录不会被别的设备覆盖，改以前的日期去下面的「历史补录」。
       </div>
       <div class="form" style="margin-top:10px">
         <div class="field"><label>仓库（owner/repo）</label><input id="cyRepo" placeholder="benjamin2006/growth-plan-data"></div>
@@ -513,17 +525,30 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
         <div class="field"><label>文件路径</label><input id="cyPath" placeholder="data/state.json"></div>
         <div class="field"><label>访问令牌 PAT（只存本机）</label><input id="cyToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
       </div>
-      <div class="btnrow" style="margin-top:8px">
-        <label class="chkline"><input type="checkbox" id="cyAuto"> 自动同步（每次改动后 15 秒）</label>
-      </div>
-      <div class="btnrow">
-        <button class="btn pri" id="btnPush">立即推送</button>
-        <button class="btn" id="btnPull">从仓库拉取</button>
-        <button class="btn dan" id="btnSyncClear">清除配置</button>
+      <div class="btnrow" style="margin-top:10px">
+        <button class="btn pri" id="btnPush">保存今日打卡</button>
+        <button class="btn" id="btnPull">从云端拉取</button>
+        <button class="btn dan" id="btnSyncClear">清除令牌</button>
       </div>
       <div class="note" id="cyStatus" style="margin-top:10px">未配置。</div>
       <div class="note" style="margin-top:8px">
         令牌在 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens 里新建，只给这个仓库勾 <b>Contents: Read and write</b>。仓库如果是公开的，这个数据文件谁都能打开，孩子的情绪记录建议放到私有仓库。
+      </div>
+    </div>
+
+    <div class="setsec">
+      <h3>🗓 历史补录 · 改以前的某一天</h3>
+      <div class="note">
+        今日页只记当天。要改以前某天的记录，在这里选日期、勾选当时真正完成的项，再保存；保存到云端会覆盖那一天在云端的记录。
+      </div>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>日期</label><input id="histDate" type="date"></div>
+      </div>
+      <div class="note" id="histMeta" style="margin-top:8px">—</div>
+      <div class="histlist" id="histList"></div>
+      <div class="btnrow">
+        <button class="btn" id="histLocal">只改本机</button>
+        <button class="btn pri" id="histCloud">保存到云端</button>
       </div>
     </div>
 
@@ -684,7 +709,6 @@ function buildDefaultRewards(){
 function save(){
   state.updatedAt = Date.now();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
-  scheduleCloudPush();
 }
 function load(){
   try {
@@ -706,9 +730,9 @@ function load(){
 const SYNC_KEY = 'growth-plan-sync-v1';
 const syncCfg = {
   repo: 'benjamin2006/growth-plan-data', branch: 'main', path: 'data/state.json',
-  token: '', auto: false, lastPush: 0
+  token: '', lastSave: 0, lastSaveDate: ''
 };
-let syncTimer = null, syncBusy = false;
+let syncBusy = false;
 
 function loadSyncCfg(){
   try {
@@ -783,85 +807,120 @@ async function putRemote(text, sha){
   const j = await r.json();
   return j && j.content ? j.content.sha : '';
 }
-/* 合并远端：打卡/情绪/兑换取并集，项目与设置以较新一方为准 */
-function mergeRemoteState(remote){
+/* 拉取云端：今天这一天以本机为准（不覆盖本机当天进度），其它日期以云端为准 */
+function applyRemoteState(remote){
   if (!remote || !Array.isArray(remote.items) || !remote.items.length) return false;
+  const ds = todayStr();
   Object.keys(remote.checks || {}).forEach(d => {
-    state.checks[d] = state.checks[d] || {};
-    Object.keys(remote.checks[d]).forEach(id => { if (!state.checks[d][id]) state.checks[d][id] = true; });
+    if (d === ds) return;
+    state.checks[d] = Object.assign({}, remote.checks[d] || {});
+    if (!Object.keys(state.checks[d]).length) delete state.checks[d];
   });
-  Object.keys(remote.moods || {}).forEach(d => {
-    if (!state.moods[d]) state.moods[d] = remote.moods[d];
-  });
+  Object.keys(remote.moods || {}).forEach(d => { if (d !== ds) state.moods[d] = remote.moods[d]; });
   const seen = {};
   (state.redemptions || []).forEach(x => { if (x && x.id) seen[x.id] = 1; });
   (remote.redemptions || []).forEach(x => {
     if (x && x.id && !seen[x.id]) { state.redemptions.push(x); seen[x.id] = 1; }
   });
-  if (Number(remote.updatedAt || 0) > Number(state.updatedAt || 0)){
-    if (Array.isArray(remote.items) && remote.items.length) state.items = remote.items;
-    if (Array.isArray(remote.rewards) && remote.rewards.length) state.rewards = remote.rewards;
-    if (remote.child) state.child = Object.assign({}, state.child, remote.child);
-    if (remote.schedule) state.schedule = Object.assign({}, state.schedule, remote.schedule);
-    state.adjust = Number(remote.adjust || 0);
-  }
-  state.updatedAt = Date.now();
+  state.items = remote.items;
+  if (Array.isArray(remote.rewards) && remote.rewards.length) state.rewards = remote.rewards;
+  state.child = Object.assign({}, state.child, remote.child || {});
+  state.schedule = Object.assign({}, state.schedule, remote.schedule || {});
+  state.adjust = Number(remote.adjust || 0);
+  state.seq = Number(remote.seq || state.seq || 100);
+  state.updatedAt = Number(remote.updatedAt || Date.now());
   return true;
 }
-function scheduleCloudPush(){
-  if (!syncCfg.auto || !syncReady() || syncBusy) return;
-  clearTimeout(syncTimer);
-  syncTimer = setTimeout(() => { cloudPush(true); }, 15000);
+/* 生成提交内容：overrideDates 里的日期用本机覆盖，其它日期保留云端，本机独有的日期补上 */
+function buildCommitPayload(base, overrideDates){
+  const b = (base && Array.isArray(base.items) && base.items.length) ? base : null;
+  const out = b ? JSON.parse(JSON.stringify(b)) : {};
+  const checks = Object.assign({}, (b && b.checks) || {});
+  const moods = Object.assign({}, (b && b.moods) || {});
+  const dates = overrideDates && overrideDates.length ? overrideDates : [todayStr()];
+  dates.forEach(d => {
+    if (state.checks[d] && Object.keys(state.checks[d]).length) checks[d] = Object.assign({}, state.checks[d]);
+    else delete checks[d];
+    if (state.moods[d]) moods[d] = state.moods[d];
+    else delete moods[d];
+  });
+  Object.keys(state.checks).forEach(d => { if (!dates.includes(d) && !checks[d]) checks[d] = state.checks[d]; });
+  Object.keys(state.moods).forEach(d => { if (!dates.includes(d) && !moods[d]) moods[d] = state.moods[d]; });
+  const seen = {}, reds = [];
+  ((b && b.redemptions) || []).forEach(x => { if (x && x.id && !seen[x.id]) { seen[x.id] = 1; reds.push(x); } });
+  (state.redemptions || []).forEach(x => { if (x && x.id && !seen[x.id]) { seen[x.id] = 1; reds.push(x); } });
+  out.checks = checks;
+  out.moods = moods;
+  out.redemptions = reds;
+  out.items = state.items;
+  out.rewards = state.rewards;
+  out.child = state.child;
+  out.schedule = state.schedule;
+  out.adjust = state.adjust;
+  out.seq = state.seq;
+  out.version = state.version;
+  out.updatedAt = Date.now();
+  out.lastSubmitDates = dates;
+  out.lastSubmitAt = out.updatedAt;
+  return out;
 }
-async function cloudPush(auto){
+async function cloudCommit(overrideDates, silent){
   if (!syncReady()){ syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
   if (syncBusy) return false;
   syncBusy = true;
   try {
-    if (!auto) syncStatus('正在读取仓库…');
+    syncStatus('正在读取云端最新数据…');
     const remote = await fetchRemote();
-    let sha = remote ? remote.sha : null;
-    if (remote){
-      let remoteState = null;
-      try { remoteState = JSON.parse(remote.text); } catch(e){}
-      if (remoteState && Number(remoteState.updatedAt || 0) > Number(state.updatedAt || 0)){
-        mergeRemoteState(remoteState);
-        try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
-        renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
-      }
-    }
-    syncStatus(auto ? '正在自动同步…' : '正在写入仓库…');
-    sha = await putRemote(JSON.stringify(state), sha);
-    syncCfg.lastPush = Date.now();
+    const sha = remote ? remote.sha : null;
+    let base = null;
+    if (remote){ try { base = JSON.parse(remote.text); } catch(e){ base = null; } }
+    syncStatus('正在保存…');
+    const payload = buildCommitPayload(base, overrideDates);
+    await putRemote(JSON.stringify(payload), sha);
+    Object.assign(state, payload);
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+    syncCfg.lastSave = Date.now();
+    syncCfg.lastSaveDate = (overrideDates && overrideDates[0]) || todayStr();
     saveSyncCfg();
-    syncStatus('✓ 已同步到 ' + syncCfg.repo + ' · ' + syncCfg.path + '（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
+    renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
+    syncStatus('✓ 已保存 ' + (payload.lastSubmitDates || []).join('、') + ' 到云端（' +
+      new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
+    if (!silent) toast('已保存，其它设备打开就能看到');
     return true;
   } catch(e){
-    syncStatus('同步失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+    syncStatus('保存失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+    if (!silent) toast('保存失败：' + (e && e.message ? e.message : '网络错误'));
     return false;
   } finally {
     syncBusy = false;
   }
 }
-async function cloudPull(auto){
-  if (!syncReady()){ syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
+function syncToday(){
+  if (!syncReady()){
+    toast('先去设置页填令牌，才能保存到云端');
+    openGate();
+    return;
+  }
+  cloudCommit([todayStr()], false);
+}
+async function cloudPull(silent){
+  if (!syncReady()){ if (!silent) syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
   if (syncBusy) return false;
   syncBusy = true;
   try {
-    syncStatus('正在读取仓库…');
+    syncStatus('正在读取云端数据…');
     const remote = await fetchRemote();
-    if (!remote){ syncStatus('仓库里还没有 ' + syncCfg.path + '，先在打卡的设备上点「立即推送」。'); return false; }
+    if (!remote){ syncStatus('云端还没有数据，先在打卡的设备上保存一次。'); return false; }
     let remoteState = null;
     try { remoteState = JSON.parse(remote.text); } catch(e){ throw new Error('文件内容不是合法 JSON'); }
-    const ok = mergeRemoteState(remoteState);
-    if (!ok) throw new Error('文件里没有可用的打卡数据');
+    if (!applyRemoteState(remoteState)) throw new Error('文件里没有可用的打卡数据');
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
     renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
-    syncStatus('✓ 已拉取并合并（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
-    if (!auto) toast('已从仓库拉取数据');
+    syncStatus('✓ 已拉取云端数据（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）。今天这一天仍以本机为准。', 'ok');
+    if (!silent) toast('已从云端拉取');
     return true;
   } catch(e){
-    syncStatus('拉取失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+    if (!silent) syncStatus('拉取失败：' + (e && e.message ? e.message : '网络错误'), 'err');
     return false;
   } finally {
     syncBusy = false;
@@ -872,29 +931,97 @@ function bindSyncUI(){
   const set = (id, v) => { const el = $(id); if (el) el.value = v; };
   set('cyRepo', syncCfg.repo); set('cyBranch', syncCfg.branch);
   set('cyPath', syncCfg.path); set('cyToken', syncCfg.token);
-  const cb = $('cyAuto'); if (cb) cb.checked = !!syncCfg.auto;
   const collect = () => {
     syncCfg.repo = ($('cyRepo').value || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
     syncCfg.branch = ($('cyBranch').value || 'main').trim();
     syncCfg.path = ($('cyPath').value || 'data/state.json').trim();
     syncCfg.token = ($('cyToken').value || '').trim();
-    syncCfg.auto = !!$('cyAuto').checked;
+    delete syncCfg.auto;
     saveSyncCfg();
-    if (syncReady()) syncStatus(syncCfg.auto ? '已配置，改动后 15 秒自动推送。' : '已配置，关闭了自动同步，需手动推送。');
+    if (syncReady()) syncStatus('已配置。打卡完成后点「保存今日打卡」提交。');
+    updateSaveHint();
   };
   ['cyRepo','cyBranch','cyPath'].forEach(id => { const el = $(id); if (el) el.addEventListener('change', collect); });
   if ($('cyToken')) $('cyToken').addEventListener('change', collect);
-  if ($('cyAuto')) $('cyAuto').addEventListener('change', collect);
-  if ($('btnPush')) $('btnPush').addEventListener('click', () => { collect(); cloudPush(false); });
+  if ($('btnSaveToday')) $('btnSaveToday').addEventListener('click', syncToday);
+  if ($('btnPush')) $('btnPush').addEventListener('click', () => { collect(); syncToday(); });
   if ($('btnPull')) $('btnPull').addEventListener('click', () => { collect(); cloudPull(false); });
   if ($('btnSyncClear')) $('btnSyncClear').addEventListener('click', () => {
-    syncCfg.token = ''; syncCfg.auto = false; saveSyncCfg();
-    set('cyToken', ''); if ($('cyAuto')) $('cyAuto').checked = false;
-    syncStatus('已清除令牌与自动同步（仓库、分支、路径保留）。');
+    syncCfg.token = ''; delete syncCfg.auto; saveSyncCfg();
+    set('cyToken', '');
+    syncStatus('已清除令牌（仓库、分支、路径保留）。');
+    updateSaveHint();
   });
   if (syncReady()){
-    syncStatus(syncCfg.auto ? '已配置，改动后 15 秒自动推送。' : '已配置，自动同步关闭。');
+    const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
+    syncStatus('已配置。' + (t ? '上次保存：' + t + '。' : '打卡完成后点「保存今日打卡」。'));
   }
+  updateSaveHint();
+}
+function updateSaveHint(){
+  const el = $('saveHint');
+  if (!el) return;
+  const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
+  el.textContent = syncReady()
+    ? '改完点保存，会以这次为准覆盖云端当天的记录。' + (t ? '上次：' + t : '')
+    : '还没配置云端令牌，去设置页「云同步」填一次。';
+}
+
+/* 历史补录：只改过去的某一天，今日页不参与 */
+let histDateStr = '';
+function defaultHistDate(){ return dstr(addDays(new Date(), -1)); }
+function renderHistory(){
+  const list = $('histList');
+  if (!list) return;
+  if (!histDateStr) histDateStr = defaultHistDate();
+  const inp = $('histDate');
+  if (inp && inp.value !== histDateStr) inp.value = histDateStr;
+  const ds = histDateStr;
+  const now = state.checks[ds] || {};
+  const order = ['学习','阅读','生活','情绪社交','运动健康','主动加分','特别挑战','需要改进'];
+  let html = '';
+  order.forEach(cat => {
+    const items = state.items.filter(it => it.cat === cat);
+    if (!items.length) return;
+    html += '<div class="histcat">' + esc(cat) + '</div>';
+    items.forEach(it => {
+      html += '<label class="histrow"><span class="t">' + (it.kind === 'minus' ? '−' : '+') +
+        Math.abs(it.pts) + ' ' + esc(it.title) + '</span>' +
+        '<input type="checkbox" class="histchk" data-id="' + it.id + '"' + (now[it.id] ? ' checked' : '') + '></label>';
+    });
+  });
+  list.innerHTML = html || '<div class="empty">还没有打卡项目。</div>';
+  if ($('histMeta')) $('histMeta').textContent = ds + ' · 已记录 ' + Object.keys(now).length + ' 项 · 当天得分 ' + dayScore(ds);
+}
+function histCheckedCount(){
+  let n = 0;
+  document.querySelectorAll('.histchk').forEach(c => { if (c.checked) n++; });
+  return n;
+}
+function histCollect(){
+  const ds = histDateStr || defaultHistDate();
+  const obj = {};
+  document.querySelectorAll('.histchk').forEach(c => { if (c.checked) obj[c.dataset.id] = true; });
+  if (Object.keys(obj).length) state.checks[ds] = obj; else delete state.checks[ds];
+  save();
+  renderHistory(); renderToday(); renderWeek(); renderReview(); renderShop();
+  return ds;
+}
+function bindHistoryUI(){
+  const inp = $('histDate');
+  if (inp) inp.addEventListener('change', () => {
+    histDateStr = inp.value || defaultHistDate();
+    renderHistory();
+  });
+  if ($('histLocal')) $('histLocal').addEventListener('click', () => {
+    const ds = histCollect();
+    toast('已改本机记录：' + ds);
+  });
+  if ($('histCloud')) $('histCloud').addEventListener('click', () => {
+    const ds = histCollect();
+    if (!syncReady()){ toast('先去上面「云端保存」填令牌'); return; }
+    cloudCommit([ds], false);
+  });
 }
 
 /* =========================================================
@@ -1282,8 +1409,9 @@ function renderSettings(){
   ).join('');
 
   $('storageNote').textContent = '打卡记录 ' + Object.keys(state.checks).length + ' 天 · 兑换记录 ' +
-    state.redemptions.length + ' 条 · 数据保存在这台设备的浏览器里，换设备请用导出/导入。';
+    state.redemptions.length + ' 条 · 本机数据先存浏览器，点「保存今日打卡」才会提交到云端。';
   refreshFiles();
+  if ($('histList')) renderHistory();
 }
 
 function saveBasic(){
@@ -1715,8 +1843,9 @@ function boot(){
   renderReview();
   renderSettings();
   bindSyncUI();
-  // 新设备首次打开：已配置云同步就先把仓库里的记录拉下来
-  if (!hadLocal && syncReady() && syncCfg.auto) cloudPull(true);
+  bindHistoryUI();
+  // 打开页面时静默拉一次云端（今天这一天以本机为准，不会被覆盖）
+  if (syncReady()) cloudPull(true);
   setInterval(() => {
     const ds = todayStr();
     if ($('todayDate') && ds !== lastDate){ lastDate = ds; renderToday(); renderWeek(); }

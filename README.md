@@ -23,16 +23,24 @@
 
 换设备或清缓存会丢数据，重要记录请定期用设置页的「导出全部数据（JSON）」备份，或换到新设备时「导入备份」。
 
-## 云同步（可选）
+## 云端保存（可选，手动提交）
 
-设置页「☁️ 云同步」把打卡数据写进**私有仓库** `benjamin2006/growth-plan-data` 的 `data/state.json`，手机打卡、电脑看复盘共用同一份（网页本身仍托管在本公开仓库的 Pages 上，数据不进公开仓库）。
+设置页「☁️ 云端保存」把数据写进**私有仓库** `benjamin2006/growth-plan-data` 的 `data/state.json`（网页本身仍托管在本公开仓库的 Pages 上，打卡数据不进公开仓库）。
 
-1. 在 GitHub 建一个 **Fine-grained PAT**（Settings → Developer settings → Personal access tokens → Fine-grained tokens），仅授权 `growth-plan-data` 这个仓库、权限只勾 `Contents: Read and write`，有效期自选。
-2. 打开网页设置页，粘贴令牌，确认仓库 `benjamin2006/growth-plan-data`、分支 `main`、路径 `data/state.json`，勾选「自动同步」。
-3. 先在有记录的设备点「立即推送」生成第一份；另一台设备填好同样的配置后打开页面，会自动拉取。
-4. 只同步打卡、情绪、兑换、项目与设置，**附件不同步**。两端都有记录时做并集合并；项目与分值以较新的一份为准。
+规则：
 
-令牌只存在该设备的浏览器里；清除配置会删掉令牌，仓库与路径保留。
+- **不自动提交**。当天打卡完成后，点一次「💾 保存今日打卡」（今日页底部或设置页），提交当天记录。
+- 哪台设备最后提交，云端**当天的数据就以哪份为准**，覆盖同一天，其它日期不动。
+- 打开页面时会静默拉取云端数据：历史日期以云端为准，**今天这一天不会被别的设备覆盖**，避免打断正在打卡的那台。
+- 改以前的某一天，只能在设置页「🗓 历史补录」里改：选日期 → 勾项目 → 保存到云端。
+
+配置步骤：
+
+1. 建 **Fine-grained PAT**（Settings → Developer settings → Personal access tokens → Fine-grained tokens），仅授权 `growth-plan-data`，权限只勾 `Contents: Read and write`。
+2. 设置页粘贴令牌，确认仓库 `benjamin2006/growth-plan-data` / 分支 `main` / 路径 `data/state.json`。
+3. 任意设备第一次用，都填一次令牌；之后打开就自动拉取，打卡完点保存即可。
+
+令牌只存在该设备的浏览器里，「清除令牌」可移除。附件（照片）不同步。
 
 ## 设计依据
 
