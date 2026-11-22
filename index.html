@@ -508,7 +508,7 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
         把打卡数据写进仓库里的一个 JSON 文件，手机打卡、电脑看复盘都能拉到同一份。只同步打卡、情绪、兑换记录和设置；附件（截图、照片）不同步。
       </div>
       <div class="form" style="margin-top:10px">
-        <div class="field"><label>仓库（owner/repo）</label><input id="cyRepo" placeholder="benjamin2006/growth-plan"></div>
+        <div class="field"><label>仓库（owner/repo）</label><input id="cyRepo" placeholder="benjamin2006/growth-plan-data"></div>
         <div class="field"><label>分支</label><input id="cyBranch" placeholder="main"></div>
         <div class="field"><label>文件路径</label><input id="cyPath" placeholder="data/state.json"></div>
         <div class="field"><label>访问令牌 PAT（只存本机）</label><input id="cyToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
@@ -705,7 +705,7 @@ function load(){
    ========================================================= */
 const SYNC_KEY = 'growth-plan-sync-v1';
 const syncCfg = {
-  repo: 'benjamin2006/growth-plan', branch: 'main', path: 'data/state.json',
+  repo: 'benjamin2006/growth-plan-data', branch: 'main', path: 'data/state.json',
   token: '', auto: false, lastPush: 0
 };
 let syncTimer = null, syncBusy = false;

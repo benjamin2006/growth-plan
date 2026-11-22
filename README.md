@@ -25,14 +25,14 @@
 
 ## 云同步（可选）
 
-设置页「☁️ 云同步」可以把打卡数据自动写进本仓库的 `data/state.json`，手机打卡、电脑看复盘共用同一份。
+设置页「☁️ 云同步」把打卡数据写进**私有仓库** `benjamin2006/growth-plan-data` 的 `data/state.json`，手机打卡、电脑看复盘共用同一份（网页本身仍托管在本公开仓库的 Pages 上，数据不进公开仓库）。
 
-1. 在 GitHub 建一个 **Fine-grained PAT**（Settings → Developer settings → Personal access tokens），只给目标仓库勾 `Contents: Read and write`，有效期自选。
-2. 页面里填 `owner/repo`、分支、文件路径（默认 `benjamin2006/growth-plan` / `main` / `data/state.json`）、粘贴令牌，勾选「自动同步」。
-3. 在打卡设备上点「立即推送」生成第一份；其它设备打开页面会自动拉取（需先在该设备填一次配置）。
-4. 只同步打卡、情绪、兑换、项目与设置，**附件不同步**。两个设备都有记录时会做并集合并，项目与分值以较新的一份为准。
+1. 在 GitHub 建一个 **Fine-grained PAT**（Settings → Developer settings → Personal access tokens → Fine-grained tokens），仅授权 `growth-plan-data` 这个仓库、权限只勾 `Contents: Read and write`，有效期自选。
+2. 打开网页设置页，粘贴令牌，确认仓库 `benjamin2006/growth-plan-data`、分支 `main`、路径 `data/state.json`，勾选「自动同步」。
+3. 先在有记录的设备点「立即推送」生成第一份；另一台设备填好同样的配置后打开页面，会自动拉取。
+4. 只同步打卡、情绪、兑换、项目与设置，**附件不同步**。两端都有记录时做并集合并；项目与分值以较新的一份为准。
 
-注意：令牌存在该设备浏览器里；仓库公开时 `data/state.json` 任何人都能读，孩子的情绪与行为记录建议放到私有仓库（网页本身仍用本仓库的 Pages）。
+令牌只存在该设备的浏览器里；清除配置会删掉令牌，仓库与路径保留。
 
 ## 设计依据
 
