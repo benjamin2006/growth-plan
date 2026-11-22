@@ -456,9 +456,23 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
         </div>
         <div class="field"><label>起床</label><input id="stWake" type="time"></div>
         <div class="field"><label>熄灯</label><input id="stBed" type="time"></div>
+        <div class="field"><label>周末起床</label><input id="stWeekWake" type="time"></div>
+        <div class="field"><label>周末熄灯</label><input id="stWeekBed" type="time"></div>
         <div class="field"><label>每日目标分</label><input id="stGoal" type="number" min="1" max="60"></div>
       </div>
       <div class="btnrow"><button class="btn pri" id="saveBasic">保存</button></div>
+    </div>
+
+    <div class="setsec">
+      <h3>🏫 深圳小学作息 · 自动同步</h3>
+      <div class="note" id="schoolStatus">—</div>
+      <div class="note" id="schoolPolicy" style="margin-top:8px">—</div>
+      <div class="btnrow" style="margin-top:10px">
+        <button class="btn pri" id="btnSchoolSync">立即同步</button>
+      </div>
+      <div class="note" style="margin-top:8px">
+        数据来自仓库里的 <b>shenzhen-school.json</b>（含深圳市教育局校历与课后服务口径）。页面每半年自动拉一次；学校临时改时间，直接在上面「孩子与作息」里改就行，下一学期再同步覆盖。
+      </div>
     </div>
 
     <div class="setsec">
@@ -665,7 +679,8 @@ const RAW_REWARDS = `
 const state = {
   version: 2,
   child: { name:'小宇', grade:'一年级', city:'深圳', goal:14 },
-  schedule: { schoolIn:'07:55', schoolOut:'15:55', lateDays:[1,3], lateEnd:'17:30', wake:'06:50', bed:'21:30' },
+  schedule: { schoolIn:'07:55', morningClass:'08:20', schoolOut:'15:55', lateDays:[1,3], lateEnd:'17:30', wake:'06:50', bed:'21:30',
+              weekend:{ wake:'07:30', bed:'22:00' }, src:null },
   items: [],
   rewards: [],
   checks: {},      // '2026-11-21' -> { itemId: true }
@@ -714,7 +729,9 @@ function load(){
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
     if (!raw || !Array.isArray(raw.items) || !raw.items.length) return false;
     Object.assign(state, raw);
-    state.schedule = Object.assign({ schoolIn:'07:55', schoolOut:'15:55', lateDays:[1,3], lateEnd:'17:30', wake:'06:50', bed:'21:30' }, raw.schedule || {});
+    state.schedule = Object.assign({ schoolIn:'07:55', morningClass:'08:20', schoolOut:'15:55', lateDays:[1,3], lateEnd:'17:30', wake:'06:50', bed:'21:30',
+      weekend:{ wake:'07:30', bed:'22:00' }, src:null }, raw.schedule || {});
+    state.schedule.weekend = Object.assign({ wake:'07:30', bed:'22:00' }, (raw.schedule || {}).weekend || {});
     state.child = Object.assign({ name:'', grade:'一年级', city:'深圳', goal:14 }, raw.child || {});
     state.checks = raw.checks || {};
     state.moods = raw.moods || {};
@@ -984,6 +1001,67 @@ function updateSaveHint(){
   el.textContent = '点保存会弹一道算术题，答对才提交；以这次为准覆盖云端当天的记录。' + (t ? '上次：' + t : '');
 }
 
+/* =========================================================
+   2.6 深圳小学作息 · 自动同步（半年一次）
+   ========================================================= */
+const SCHOOL_URL = 'shenzhen-school.json';
+const DAY = 86400000;
+function schoolStatus(txt, kind){
+  const el = $('schoolStatus');
+  if (!el) return;
+  el.textContent = txt;
+  el.style.color = kind === 'err' ? '#b91c1c' : kind === 'ok' ? '#047857' : '';
+}
+function schoolDue(){
+  const src = state.schedule.src;
+  if (!src) return true;
+  const next = src.recheckAfter ? parseD(src.recheckAfter) : null;
+  if (next && Date.now() > next.getTime()) return true;
+  return Date.now() - Number(src.fetchedAt || 0) > 183 * DAY;
+}
+async function syncSchoolSchedule(force){
+  schoolStatus('正在读取深圳小学作息…');
+  try {
+    const r = await fetch(SCHOOL_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (!d || !d.schoolIn) throw new Error('数据格式不对');
+    const s = state.schedule;
+    s.schoolIn = d.schoolIn || s.schoolIn;
+    s.morningClass = d.morningClass || s.morningClass;
+    s.schoolOut = d.schoolOut || s.schoolOut;
+    s.lateEnd = d.lateEnd || s.lateEnd;
+    if (Array.isArray(d.lateDays) && d.lateDays.length) s.lateDays = d.lateDays.slice();
+    s.wake = d.wake || s.wake;
+    s.bed = d.bed || s.bed;
+    if (d.weekend) s.weekend = Object.assign({}, s.weekend, d.weekend);
+    s.src = {
+      semester: d.semester || '', updated: d.updated || '', recheckAfter: d.recheckAfter || '',
+      note: d.note || '', policy: d.policy || [], term: d.term || null,
+      fetchedAt: Date.now()
+    };
+    save();
+    renderTimeline(new Date().getDay());
+    renderWeek();
+    renderSettings();
+    schoolStatus('✓ 已同步（' + (d.semester || '') + '，数据日期 ' + (d.updated || '未知') +
+      '）。下次自动检查：' + (d.recheckAfter || '180 天后') + '。', 'ok');
+    return true;
+  } catch(e){
+    const src = state.schedule.src;
+    schoolStatus('同步失败：' + (e && e.message ? e.message : '网络错误') +
+      (src && src.updated ? '（继续使用本地已有作息，数据日期 ' + src.updated + '）' : ''), 'err');
+    return false;
+  }
+}
+function describeSchoolSrc(){
+  const src = state.schedule.src;
+  if (!src) return '还没有同步过。点「立即同步」会读取仓库里的深圳小学作息文件。';
+  const at = src.fetchedAt ? new Date(src.fetchedAt).toLocaleDateString('zh-CN') : '—';
+  return '当前使用：' + (src.semester || '未知学期') + ' · 数据日期 ' + (src.updated || '未知') +
+    ' · 本机同步于 ' + at + ' · 每半年自动检查一次（下次 ' + (src.recheckAfter || '180 天后') + '）';
+}
+
 /* 历史补录：只改过去的某一天，今日页不参与 */
 let histDateStr = '';
 function defaultHistDate(){ return dstr(addDays(new Date(), -1)); }
@@ -1171,28 +1249,52 @@ function renderToday(){
 
 function renderTimeline(dow){
   const s = state.schedule;
-  const isLate = (s.lateDays || []).includes(dow);
-  $('tlTag').textContent = isLate ? '延时课日（放学 ' + s.lateEnd + '）' : '普通日';
-  const rows = [];
-  rows.push([s.wake, '起床 + 自己穿衣', '闹钟响第一声就起，家长只提醒一次']);
-  rows.push(['07:00', '洗漱 + 早餐', '20 分钟内吃完，不看屏幕']);
-  rows.push(['07:35', '出门前检查书包', '作业 / 水壶 / 校卡，自己核对清单']);
-  rows.push([s.schoolIn, '到校', '进校门前和家长说再见']);
-  if (isLate){
-    rows.push([s.schoolOut, '放学 → 延时课', '在校内课后服务，16:30 开始']);
-    rows.push([s.lateEnd, '延时课结束', '接到后先给 10 分钟缓冲，不立刻问作业']);
+  const isWeekend = dow === 0 || dow === 6;
+  const isLate = !isWeekend && (s.lateDays || []).includes(dow);
+  const wk = s.weekend || {};
+  $('tlTag').textContent = isWeekend ? '周末（不上学）' :
+    (isLate ? '延时课日（放学 ' + s.lateEnd + '）' : '普通日');
+  let rows = [];
+
+  if (isWeekend){
+    rows.push([wk.wake || '07:30', '起床（周末可多睡 40 分钟）', '不补到中午，最多晚 40 分钟起床']);
+    rows.push(['08:00', '早餐 + 收拾自己房间', '吃完自己把碗放水槽，玩具归位一件']);
+    rows.push(['08:40', '自由玩 / 乐高 / 拼图', '自己选，不安排任务，让他主导 40 分钟']);
+    rows.push(['09:30', '户外大运动 90 分钟', '公园 / 骑车 / 球类：先放电，情绪更稳']);
+    rows.push(['11:10', '回家 + 洗澡换衣服', '家长准备午饭，他负责擦桌子、摆碗筷']);
+    rows.push(['12:00', '午餐', '30 分钟内吃完，中途不看屏幕']);
+    rows.push(['13:00', '午休 / 安静阅读 40 分钟', '躺床上听音频或自己看书，不看视频']);
+    rows.push(['14:00', '周末作业 / 本周复盘', '先做 20 分钟，休息 5 分钟；一年级作业量很小']);
+    rows.push(['15:00', '兴趣时间：画画 / 手工 / 家务', '一起做一件家务（叠衣服、择菜），算主动加分']);
+    rows.push(['16:30', '屏幕时间（用积分兑换）', '计时器 30–45 分钟，响了立刻结束，不讨价']);
+    rows.push(['17:20', '下楼跑一跑 / 帮忙准备晚饭', '晚饭前不要坐着玩，先活动一下']);
+    rows.push(['18:30', '晚餐', '全家一起吃，餐桌上聊今天最开心的事']);
+    rows.push(['19:20', '家庭时间：桌游 / 亲子聊', '15 分钟聊情绪：今天红/黄/绿哪个时候多']);
+    rows.push(['20:20', '洗漱 + 准备明天', '洗澡、刷牙、把明天要穿的衣服放床边']);
+    rows.push(['21:00', '床上阅读 / 听故事', '屏幕已经收走，讲 2 个故事或自己读']);
+    rows.push([wk.bed || '22:00', '熄灯', '周末最多比平时晚 30 分钟，别打乱生物钟']);
   } else {
-    rows.push([s.schoolOut, '放学 → 到家', '到家先洗手喝水，15 分钟放空时间']);
+    rows.push([s.wake, '起床 + 自己穿衣', '闹钟响第一声就起，家长只提醒一次']);
+    rows.push(['07:00', '洗漱 + 早餐', '20 分钟内吃完，不看屏幕']);
+    rows.push(['07:35', '出门前检查书包', '作业 / 水壶 / 校卡，自己核对清单']);
+    rows.push([s.schoolIn, '到校', '进校门前和家长说再见']);
+    if (s.morningClass) rows.push([s.morningClass, '第一节课（不早于 8:20）', '到校后先交作业、早读，8:20 才开始上课']);
+    if (isLate){
+      rows.push([s.schoolOut, '放学 → 延时课', '校内课后服务，自愿参加、不收费，结束不晚于 18:00']);
+      rows.push([s.lateEnd, '延时课结束', '接到后先给 10 分钟缓冲，不立刻问作业']);
+    } else {
+      rows.push([s.schoolOut, '放学 → 到家', '到家先洗手喝水，15 分钟放空时间']);
+    }
+    rows.push([isLate ? '17:45' : '17:00', isLate ? '到家 + 户外 15 分钟' : '户外 / 跳绳 / 球类', '先把身体电量放掉，再谈作业']);
+    rows.push(['18:00', '晚餐', '30 分钟内吃完，桌上不摆玩具']);
+    rows.push(['18:40', '亲子聊 10 分钟', '今天最开心的一件事 / 最难的一件事']);
+    rows.push([isLate ? '19:10' : '19:00', '作业 / 复习 20 分钟', '一年级没有书面作业：读 10 分钟、说一遍今天学的']);
+    rows.push([isLate ? '19:50' : '19:40', '阅读 / 朗读', '自主阅读 30 分钟或朗读 10 分钟']);
+    rows.push([isLate ? '20:20' : '20:10', '自由时间 / 兑换的游戏时间', '计时器响就结束']);
+    rows.push([isLate ? '20:45' : '20:40', '洗漱 + 整理明日书包', '自己完成，家长只检查']);
+    rows.push(['21:00', '床上聊天 + 情绪复盘', '今天红/黄/绿哪个时候最多？为什么']);
+    rows.push([s.bed, '熄灯', '手机 / iPad 已交给家长，保证 10 小时睡眠']);
   }
-  rows.push([isLate ? '17:45' : '17:00', isLate ? '到家 + 户外 15 分钟' : '户外 / 跳绳 / 球类', '先把身体电量放掉，再谈作业']);
-  rows.push(['18:00', '晚餐', '30 分钟内吃完，桌上不摆玩具']);
-  rows.push(['18:40', '亲子聊 10 分钟', '今天最开心的一件事 / 最难的一件事']);
-  rows.push([isLate ? '19:10' : '19:00', '作业时间', '番茄钟 10 分钟 + 休息 2 分钟，先做难的']);
-  rows.push([isLate ? '19:50' : '19:40', '阅读 / 朗读', '自主阅读 30 分钟或朗读 10 分钟']);
-  rows.push([isLate ? '20:20' : '20:10', '自由时间 / 兑换的游戏时间', '计时器响就结束']);
-  rows.push([isLate ? '20:45' : '20:40', '洗漱 + 整理明日书包', '自己完成，家长只检查']);
-  rows.push(['21:00', '床上聊天 + 情绪复盘', '今天红/黄/绿哪个时候最多？为什么']);
-  rows.push([s.bed, '熄灯', '手机 / iPad 已交给家长']);
 
   $('tlBody').innerHTML = rows.map(r =>
     '<div class="tl-row"><div class="tl-time">' + r[0] + '</div><div class="tl-dot"></div>' +
@@ -1411,7 +1513,19 @@ function renderSettings(){
   $('stLateDays').value = (s.lateDays || []).join(',');
   $('stWake').value = s.wake;
   $('stBed').value = s.bed;
+  const wk = s.weekend || {};
+  if ($('stWeekWake')) $('stWeekWake').value = wk.wake || '07:30';
+  if ($('stWeekBed')) $('stWeekBed').value = wk.bed || '22:00';
   $('stGoal').value = c.goal;
+  if ($('schoolStatus')) schoolStatus(describeSchoolSrc(), state.schedule.src ? 'ok' : '');
+  if ($('schoolPolicy')){
+    const src = s.src;
+    $('schoolPolicy').innerHTML = src && src.policy && src.policy.length
+      ? '<b>政策口径：</b><br>' + src.policy.map(p => '· ' + esc(p)).join('<br>') +
+        (src.term ? '<br><b>2026–2027 学期节点：</b>开学 ' + esc(src.term.firstDay || '') + ' · 寒假 ' + esc(src.term.winterBreak || '') +
+          ' · 春季开学 ' + esc(src.term.springStart || '') + ' · 暑假 ' + esc(src.term.summerBreak || '') : '')
+      : '还没有同步过作息数据。';
+  }
 
   $('itemEditor').innerHTML = state.items.map(it =>
     '<div class="editrow"><input class="t" data-edit-item="' + it.id + '" value="' + esc(it.title) + '">' +
@@ -1442,6 +1556,9 @@ function saveBasic(){
   state.schedule.wake = $('stWake').value || '06:50';
   state.schedule.bed = $('stBed').value || '21:30';
   state.schedule.lateDays = $('stLateDays').value ? $('stLateDays').value.split(',').map(Number) : [];
+  state.schedule.weekend = Object.assign({ wake:'07:30', bed:'22:00' }, state.schedule.weekend || {});
+  if ($('stWeekWake') && $('stWeekWake').value) state.schedule.weekend.wake = $('stWeekWake').value;
+  if ($('stWeekBed') && $('stWeekBed').value) state.schedule.weekend.bed = $('stWeekBed').value;
   save();
   renderBrand(); renderToday(); renderWeek(); renderReview(); renderShop();
   toast('已保存');
@@ -1869,6 +1986,9 @@ function boot(){
   renderSettings();
   bindSyncUI();
   bindHistoryUI();
+  if ($('btnSchoolSync')) $('btnSchoolSync').addEventListener('click', () => syncSchoolSchedule(true));
+  // 深圳小学作息：没同步过 / 超过半年，自动读一次
+  if (schoolDue()) syncSchoolSchedule(false);
   // 打开页面时静默拉一次云端（今天这一天以本机为准，不会被覆盖）
   if (syncReady()) cloudPull(true);
   setInterval(() => {
