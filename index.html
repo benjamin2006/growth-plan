@@ -376,7 +376,7 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
     <div class="card" style="margin-top:12px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <button class="btn pri" id="btnSaveToday" style="flex:0 0 auto">💾 保存今日打卡</button>
-        <div class="note" id="saveHint" style="margin:0;flex:1 1 200px">未配置云端，去设置页填一次令牌。</div>
+        <div class="note" id="saveHint" style="margin:0;flex:1 1 200px">点保存会弹一道算术题，答对才提交。</div>
       </div>
     </div>
   </section>
@@ -515,24 +515,26 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
     </div>
 
     <div class="setsec" id="cloudSec">
-      <h3>☁️ 云端保存 · GitHub</h3>
+      <h3>☁️ 云端保存 · 多设备共用</h3>
       <div class="note">
-        不会自动提交。当天打卡完成后，点一次「保存今日打卡」提交积分；哪台设备最后提交，云端当天的记录就以哪份为准。今天的打卡记录不会被别的设备覆盖，改以前的日期去下面的「历史补录」。
+        不填账号、不要令牌，只填一个「存储地址」就行。地址填好之后：当天打卡完成点「保存今日打卡」→ 弹一道三年级算术题 → 答对才提交；哪台设备最后提交，云端当天就以此为准，其它日期不动。打开页面会自动读云端：本机今天已有记录就以本机为准，本机今天空着就用云端今天的数据。改以前的日期，用下面的「历史补录」。
       </div>
       <div class="form" style="margin-top:10px">
-        <div class="field"><label>仓库（owner/repo）</label><input id="cyRepo" placeholder="benjamin2006/growth-plan-data"></div>
-        <div class="field"><label>分支</label><input id="cyBranch" placeholder="main"></div>
-        <div class="field"><label>文件路径</label><input id="cyPath" placeholder="data/state.json"></div>
-        <div class="field"><label>访问令牌 PAT（只存本机）</label><input id="cyToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
+        <div class="field" style="grid-column:1/-1"><label>存储地址（GET 读 / PUT 写 的 JSON 地址）</label><input id="cyEndpoint" placeholder="https://getpantry.cloud/apiv1/pantry/xxxx/basket/growth" autocomplete="off"></div>
       </div>
-      <div class="btnrow" style="margin-top:10px">
-        <button class="btn pri" id="btnPush">保存今日打卡</button>
+      <div class="btnrow">
+        <button class="btn pri" id="btnSyncSave">保存这个地址</button>
+        <button class="btn" id="btnPush">保存今日打卡</button>
         <button class="btn" id="btnPull">从云端拉取</button>
-        <button class="btn dan" id="btnSyncClear">清除令牌</button>
+        <button class="btn" id="btnSyncCheck">检查云端地址</button>
       </div>
-      <div class="note" id="cyStatus" style="margin-top:10px">未配置。</div>
+      <div class="note" id="cyStatus" style="margin-top:10px">—</div>
       <div class="note" style="margin-top:8px">
-        令牌在 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens 里新建，只给这个仓库勾 <b>Contents: Read and write</b>。仓库如果是公开的，这个数据文件谁都能打开，孩子的情绪记录建议放到私有仓库。
+        <b>怎么免费拿地址（30 秒，不用注册）：</b><br>
+        1. 打开 getpantry.cloud，填任意邮箱，勾选人机验证，点「Create a Pantry」，给 pantry 起个名；<br>
+        2. 创建成功后会给你一串 Pantry ID（UUID 形式）；<br>
+        3. 把地址拼成：<span style="word-break:break-all">https://getpantry.cloud/apiv1/pantry/&lt;那串ID&gt;/basket/growth</span>，粘到上面保存即可。免费额度是 100 个篮子、每篮 1.44 MB，足够用。<br>
+        也支持 api.restful-api.dev 的对象地址，或任何「GET 返回 JSON、PUT 覆盖 JSON」的自建地址。
       </div>
     </div>
 
@@ -565,11 +567,11 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
   </section>
 </div>
 
-<!-- 家长验证弹窗 -->
+<!-- 提交验证弹窗 -->
 <div class="mask" id="gateMask">
   <div class="modal gate">
-    <h2>🔒 家长验证</h2>
-    <p>设置页只对家长开放。答对下面这道三年级数学题即可进入，题目每次随机。</p>
+    <h2 id="gateTitle">🔒 提交验证</h2>
+    <p id="gateDesc">答对这道三年级数学题才会提交。题目每次随机。</p>
     <div class="qbox">
       <div class="q" id="gateQ">—</div>
       <div class="sm" id="gateSm">选择正确的答案</div>
@@ -725,14 +727,22 @@ function load(){
 }
 
 /* =========================================================
-   2.5 云同步（GitHub Contents API）
+   2.5 云端保存（公开免费存储，不用账号令牌）
    ========================================================= */
-const SYNC_KEY = 'growth-plan-sync-v1';
+const SYNC_KEY = 'growth-plan-sync-v2';
 const syncCfg = {
-  repo: 'benjamin2006/growth-plan-data', branch: 'main', path: 'data/state.json',
-  token: '', lastSave: 0, lastSaveDate: ''
+  endpoint: '',
+  lastSave: 0, lastSaveDate: ''
 };
 let syncBusy = false;
+/* 端点类型：pantry（getpantry.cloud）/ restful（api.restful-api.dev）/ generic（自建） */
+function epKind(){
+  const u = String(syncCfg.endpoint || '').trim();
+  if (!u) return 'none';
+  if (/getpantry\.cloud\/apiv1\/pantry/i.test(u)) return 'pantry';
+  if (/restful-api\.dev\/objects/i.test(u)) return 'restful';
+  return 'generic';
+}
 
 function loadSyncCfg(){
   try {
@@ -743,80 +753,65 @@ function loadSyncCfg(){
 function saveSyncCfg(){
   try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch(e){}
 }
-function syncReady(){ return !!(syncCfg.repo && syncCfg.branch && syncCfg.path && syncCfg.token); }
+function syncReady(){ return !!syncCfg.endpoint; }
 function syncStatus(txt, kind){
   const el = $('cyStatus');
   if (!el) return;
   el.textContent = txt;
   el.style.color = kind === 'err' ? '#b91c1c' : kind === 'ok' ? '#047857' : '';
 }
-function base64EncodeUtf8(str){
-  const bytes = new TextEncoder().encode(str);
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 4096){
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 4096));
-  }
-  return btoa(bin);
-}
-function base64DecodeUtf8(b64){
-  const bin = atob(String(b64).replace(/\s/g, ''));
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
-}
-function apiPath(){
-  return 'https://api.github.com/repos/' + syncCfg.repo + '/contents/' +
-    String(syncCfg.path).split('/').map(encodeURIComponent).join('/');
-}
-function apiHeaders(extra){
-  return Object.assign({
-    'Accept': 'application/vnd.github+json',
-    'Authorization': 'Bearer ' + syncCfg.token,
-    'X-GitHub-Api-Version': '2022-11-28'
-  }, extra || {});
-}
-function apiError(status){
-  if (status === 401) return '令牌无效或已过期';
-  if (status === 403) return '没有该仓库写权限（或触发了频率限制）';
-  if (status === 404) return '路径或分支不存在';
+function syncError(status){
+  if (status === 404) return '云端记录不存在（可能被清理）';
+  if (status === 429) return '请求太频繁，稍等一会儿再试';
+  if (status >= 500) return '云端服务暂时不可用';
   return 'HTTP ' + status;
 }
 async function fetchRemote(){
-  const r = await fetch(apiPath() + '?ref=' + encodeURIComponent(syncCfg.branch), { headers: apiHeaders(), cache: 'no-store' });
+  const kind = epKind();
+  if (kind === 'none') throw new Error('还没填云端地址');
+  const r = await fetch(syncCfg.endpoint, { cache: 'no-store' });
   if (r.status === 404) return null;
-  if (!r.ok) throw new Error('读取失败：' + apiError(r.status));
-  const j = await r.json();
-  return { sha: j.sha, text: base64DecodeUtf8(j.content || '') };
+  if (!r.ok) throw new Error('读取失败：' + syncError(r.status));
+  const text = await r.text();
+  let j = null;
+  try { j = text ? JSON.parse(text) : null; } catch(e){ j = null; }
+  const d = kind === 'restful' ? (j && j.data) : j;
+  if (!d || !Array.isArray(d.items) || !d.items.length) return null;
+  return { data: d };
 }
-async function putRemote(text, sha){
-  const body = {
-    message: 'sync: 打卡数据 ' + new Date().toLocaleString('zh-CN', { hour12: false }),
-    content: base64EncodeUtf8(text),
-    branch: syncCfg.branch
-  };
-  if (sha) body.sha = sha;
-  const r = await fetch(apiPath(), {
+async function putRemote(payload){
+  const kind = epKind();
+  if (kind === 'none') throw new Error('还没填云端地址');
+  const body = kind === 'restful'
+    ? JSON.stringify({ name: 'growth-plan-ben', data: payload })
+    : JSON.stringify(payload);
+  const r = await fetch(syncCfg.endpoint, {
     method: 'PUT',
-    headers: apiHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(body)
+    headers: { 'Content-Type': 'application/json' },
+    body
   });
   if (!r.ok){
     const t = await r.text();
-    throw new Error('写入失败：' + apiError(r.status) + (t ? ' · ' + t.slice(0, 100) : ''));
+    throw new Error('保存失败：' + syncError(r.status) + (t ? ' · ' + t.slice(0, 80) : ''));
   }
-  const j = await r.json();
-  return j && j.content ? j.content.sha : '';
+  return true;
 }
-/* 拉取云端：今天这一天以本机为准（不覆盖本机当天进度），其它日期以云端为准 */
+/* 拉取云端：本机今天已经填过就以本机为准，本机今天空着就接受云端（新设备打开也能看到今天） */
 function applyRemoteState(remote){
   if (!remote || !Array.isArray(remote.items) || !remote.items.length) return false;
   const ds = todayStr();
+  const localToday = state.checks[ds] || {};
+  const remoteToday = (remote.checks || {})[ds] || {};
   Object.keys(remote.checks || {}).forEach(d => {
     if (d === ds) return;
     state.checks[d] = Object.assign({}, remote.checks[d] || {});
     if (!Object.keys(state.checks[d]).length) delete state.checks[d];
   });
   Object.keys(remote.moods || {}).forEach(d => { if (d !== ds) state.moods[d] = remote.moods[d]; });
+  if (!Object.keys(localToday).length && Object.keys(remoteToday).length){
+    state.checks[ds] = Object.assign({}, remoteToday);
+    if (remote.moods && remote.moods[ds]) state.moods[ds] = remote.moods[ds];
+  }
   const seen = {};
   (state.redemptions || []).forEach(x => { if (x && x.id) seen[x.id] = 1; });
   (remote.redemptions || []).forEach(x => {
@@ -865,25 +860,22 @@ function buildCommitPayload(base, overrideDates){
   return out;
 }
 async function cloudCommit(overrideDates, silent){
-  if (!syncReady()){ syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
   if (syncBusy) return false;
   syncBusy = true;
   try {
     syncStatus('正在读取云端最新数据…');
     const remote = await fetchRemote();
-    const sha = remote ? remote.sha : null;
-    let base = null;
-    if (remote){ try { base = JSON.parse(remote.text); } catch(e){ base = null; } }
+    const base = remote ? remote.data : null;
     syncStatus('正在保存…');
     const payload = buildCommitPayload(base, overrideDates);
-    await putRemote(JSON.stringify(payload), sha);
+    await putRemote(payload);
     Object.assign(state, payload);
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
     syncCfg.lastSave = Date.now();
     syncCfg.lastSaveDate = (overrideDates && overrideDates[0]) || todayStr();
     saveSyncCfg();
     renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
-    syncStatus('✓ 已保存 ' + (payload.lastSubmitDates || []).join('、') + ' 到云端（' +
+    syncStatus('✓ 已保存 ' + (payload.lastSubmitDates || []).join('、') + '（' +
       new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
     if (!silent) toast('已保存，其它设备打开就能看到');
     return true;
@@ -895,28 +887,27 @@ async function cloudCommit(overrideDates, silent){
     syncBusy = false;
   }
 }
+/* 点保存 → 先弹算术题，答对才提交 */
 function syncToday(){
   if (!syncReady()){
-    toast('先去设置页填令牌，才能保存到云端');
-    openGate();
+    toast('先在设置页填一个存储地址（30 秒，不用令牌）');
+    setPage('settings');
+    if (typeof renderSettings === 'function') renderSettings();
     return;
   }
-  cloudCommit([todayStr()], false);
+  openGate(() => cloudCommit([todayStr()], false));
 }
 async function cloudPull(silent){
-  if (!syncReady()){ if (!silent) syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
   if (syncBusy) return false;
   syncBusy = true;
   try {
     syncStatus('正在读取云端数据…');
     const remote = await fetchRemote();
-    if (!remote){ syncStatus('云端还没有数据，先在打卡的设备上保存一次。'); return false; }
-    let remoteState = null;
-    try { remoteState = JSON.parse(remote.text); } catch(e){ throw new Error('文件内容不是合法 JSON'); }
-    if (!applyRemoteState(remoteState)) throw new Error('文件里没有可用的打卡数据');
+    if (!remote){ syncStatus('云端还没有记录，先在这台设备上保存一次。'); return false; }
+    if (!applyRemoteState(remote.data)) throw new Error('云端记录为空');
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
     renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
-    syncStatus('✓ 已拉取云端数据（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）。今天这一天仍以本机为准。', 'ok');
+    syncStatus('✓ 已拉取云端数据（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）。本机今天已有记录则保留本机，本机今天空着则采用云端今天的数据。', 'ok');
     if (!silent) toast('已从云端拉取');
     return true;
   } catch(e){
@@ -928,43 +919,44 @@ async function cloudPull(silent){
 }
 function bindSyncUI(){
   loadSyncCfg();
-  const set = (id, v) => { const el = $(id); if (el) el.value = v; };
-  set('cyRepo', syncCfg.repo); set('cyBranch', syncCfg.branch);
-  set('cyPath', syncCfg.path); set('cyToken', syncCfg.token);
-  const collect = () => {
-    syncCfg.repo = ($('cyRepo').value || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
-    syncCfg.branch = ($('cyBranch').value || 'main').trim();
-    syncCfg.path = ($('cyPath').value || 'data/state.json').trim();
-    syncCfg.token = ($('cyToken').value || '').trim();
-    delete syncCfg.auto;
+  const ep = $('cyEndpoint');
+  if (ep && syncCfg.endpoint) ep.value = syncCfg.endpoint;
+  if ($('btnSyncSave')) $('btnSyncSave').addEventListener('click', () => {
+    const v = String(($('cyEndpoint') || {}).value || '').trim();
+    if (!/^https?:\/\//i.test(v)){ syncStatus('地址要以 http:// 或 https:// 开头', 'err'); return; }
+    syncCfg.endpoint = v;
     saveSyncCfg();
-    if (syncReady()) syncStatus('已配置。打卡完成后点「保存今日打卡」提交。');
-    updateSaveHint();
-  };
-  ['cyRepo','cyBranch','cyPath'].forEach(id => { const el = $(id); if (el) el.addEventListener('change', collect); });
-  if ($('cyToken')) $('cyToken').addEventListener('change', collect);
-  if ($('btnSaveToday')) $('btnSaveToday').addEventListener('click', syncToday);
-  if ($('btnPush')) $('btnPush').addEventListener('click', () => { collect(); syncToday(); });
-  if ($('btnPull')) $('btnPull').addEventListener('click', () => { collect(); cloudPull(false); });
-  if ($('btnSyncClear')) $('btnSyncClear').addEventListener('click', () => {
-    syncCfg.token = ''; delete syncCfg.auto; saveSyncCfg();
-    set('cyToken', '');
-    syncStatus('已清除令牌（仓库、分支、路径保留）。');
+    syncStatus('✓ 地址已保存到这台设备。点「检查云端地址」确认能不能连通。', 'ok');
     updateSaveHint();
   });
-  if (syncReady()){
-    const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
-    syncStatus('已配置。' + (t ? '上次保存：' + t + '。' : '打卡完成后点「保存今日打卡」。'));
-  }
+  if ($('btnSaveToday')) $('btnSaveToday').addEventListener('click', syncToday);
+  if ($('btnPush')) $('btnPush').addEventListener('click', syncToday);
+  if ($('btnPull')) $('btnPull').addEventListener('click', () => cloudPull(false));
+  if ($('btnSyncCheck')) $('btnSyncCheck').addEventListener('click', async () => {
+    if (!syncReady()){ syncStatus('先填并保存一个存储地址。', 'err'); return; }
+    syncStatus('正在检查云端地址…');
+    try {
+      const remote = await fetchRemote();
+      if (remote){
+        const at = Number(remote.data.updatedAt || 0);
+        syncStatus('✓ 地址可用，云端已有记录' + (at ? '（更新于 ' + new Date(at).toLocaleString('zh-CN', { hour12: false }) + '）' : ''), 'ok');
+      } else {
+        syncStatus('✓ 地址可以访问，云端还没有保存过记录。点「保存今日打卡」写入第一条。', 'ok');
+      }
+    } catch(e){
+      syncStatus('云端地址不可用：' + (e && e.message ? e.message : '网络错误'), 'err');
+    }
+  });
+  const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
+  syncStatus(t ? '上次保存：' + t + '。点「保存今日打卡」会先弹一道算术题。' : '点「保存今日打卡」会先弹一道算术题，答对才提交。');
   updateSaveHint();
 }
 function updateSaveHint(){
   const el = $('saveHint');
   if (!el) return;
+  if (!syncReady()){ el.textContent = '还没填云端地址：去设置页「云端保存」填一次就能多设备共用。'; return; }
   const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
-  el.textContent = syncReady()
-    ? '改完点保存，会以这次为准覆盖云端当天的记录。' + (t ? '上次：' + t : '')
-    : '还没配置云端令牌，去设置页「云端保存」填一次。';
+  el.textContent = '点保存会弹一道算术题，答对才提交；以这次为准覆盖云端当天的记录。' + (t ? '上次：' + t : '');
 }
 
 /* 历史补录：只改过去的某一天，今日页不参与 */
@@ -1019,7 +1011,7 @@ function bindHistoryUI(){
   });
   if ($('histCloud')) $('histCloud').addEventListener('click', () => {
     const ds = histCollect();
-    if (!syncReady()){ toast('先去上面「云端保存」填令牌'); return; }
+    if (!syncReady()){ toast('云端地址不可用'); return; }
     cloudCommit([ds], false);
   });
 }
@@ -1437,6 +1429,7 @@ function renderBrand(){
    10. 家长验证（三年级数学题，ABC 选项）
    ========================================================= */
 let gateTries = 3, gateLockUntil = 0, gateRightIndex = 0, gateOptsValues = [];
+let gateAction = null;
 
 function shuffle(arr){
   const a = arr.slice();
@@ -1498,7 +1491,12 @@ function newGate(){
   $('gateTry').textContent = '还有 3 次机会';
 }
 
-function openGate(){
+function openGate(action){
+  gateAction = typeof action === 'function' ? action : null;
+  if ($('gateTitle')) $('gateTitle').textContent = gateAction ? '🔒 提交验证' : '🔒 家长验证';
+  if ($('gateDesc')) $('gateDesc').textContent = gateAction
+    ? '答对这道三年级数学题才会提交，防止孩子随手点。'
+    : '答对这道三年级数学题再继续。';
   const now = Date.now();
   if (now < gateLockUntil){
     toast('答错次数过多，请等 ' + Math.ceil((gateLockUntil - now) / 1000) + ' 秒后再试');
@@ -1511,9 +1509,11 @@ function openGate(){
 function gatePick(i){
   if (i === gateRightIndex){
     $('gateMask').classList.remove('show');
+    const act = gateAction;
+    gateAction = null;
+    if (act){ act(); return; }
     setPage('settings');
     renderSettings();
-    toast('验证通过，已进入设置页');
     return;
   }
   gateTries--;
@@ -1681,7 +1681,7 @@ document.querySelectorAll('.tab').forEach(t => {
 });
 
 /* 齿轮 → 门禁 */
-$('gear').addEventListener('click', openGate);
+$('gear').addEventListener('click', () => { setPage('settings'); renderSettings(); });
 $('gateCancel').addEventListener('click', () => $('gateMask').classList.remove('show'));
 $('gateMask').addEventListener('click', e => { if (e.target === $('gateMask')) $('gateMask').classList.remove('show'); });
 $('gateOpts').addEventListener('click', e => {
