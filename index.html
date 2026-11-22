@@ -964,7 +964,7 @@ function updateSaveHint(){
   const t = syncCfg.lastSave ? new Date(syncCfg.lastSave).toLocaleString('zh-CN', { hour12: false }) : '';
   el.textContent = syncReady()
     ? '改完点保存，会以这次为准覆盖云端当天的记录。' + (t ? '上次：' + t : '')
-    : '还没配置云端令牌，去设置页「云同步」填一次。';
+    : '还没配置云端令牌，去设置页「云端保存」填一次。';
 }
 
 /* 历史补录：只改过去的某一天，今日页不参与 */
