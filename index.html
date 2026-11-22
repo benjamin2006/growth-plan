@@ -223,6 +223,8 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
 .setsec h3{font-size:13.5px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .form{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
 .form.cols3{grid-template-columns:1.4fr .7fr .8fr}
+.chkline{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);cursor:pointer}
+.chkline input{width:16px;height:16px;accent-color:#3b82f6}
 .field{display:flex;flex-direction:column;gap:5px}
 .field label{font-size:11.5px;color:var(--muted);font-weight:600}
 .field input,.field select{
@@ -500,6 +502,31 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
       </div>
     </div>
 
+    <div class="setsec" id="cloudSec">
+      <h3>☁️ 云同步 · 存到 GitHub 仓库</h3>
+      <div class="note">
+        把打卡数据写进仓库里的一个 JSON 文件，手机打卡、电脑看复盘都能拉到同一份。只同步打卡、情绪、兑换记录和设置；附件（截图、照片）不同步。
+      </div>
+      <div class="form" style="margin-top:10px">
+        <div class="field"><label>仓库（owner/repo）</label><input id="cyRepo" placeholder="benjamin2006/growth-plan"></div>
+        <div class="field"><label>分支</label><input id="cyBranch" placeholder="main"></div>
+        <div class="field"><label>文件路径</label><input id="cyPath" placeholder="data/state.json"></div>
+        <div class="field"><label>访问令牌 PAT（只存本机）</label><input id="cyToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
+      </div>
+      <div class="btnrow" style="margin-top:8px">
+        <label class="chkline"><input type="checkbox" id="cyAuto"> 自动同步（每次改动后 15 秒）</label>
+      </div>
+      <div class="btnrow">
+        <button class="btn pri" id="btnPush">立即推送</button>
+        <button class="btn" id="btnPull">从仓库拉取</button>
+        <button class="btn dan" id="btnSyncClear">清除配置</button>
+      </div>
+      <div class="note" id="cyStatus" style="margin-top:10px">未配置。</div>
+      <div class="note" style="margin-top:8px">
+        令牌在 GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens 里新建，只给这个仓库勾 <b>Contents: Read and write</b>。仓库如果是公开的，这个数据文件谁都能打开，孩子的情绪记录建议放到私有仓库。
+      </div>
+    </div>
+
     <div class="setsec">
       <h3>🧭 长期可扩展</h3>
       <div class="note">
@@ -655,7 +682,9 @@ function buildDefaultRewards(){
    2. 存储
    ========================================================= */
 function save(){
+  state.updatedAt = Date.now();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+  scheduleCloudPush();
 }
 function load(){
   try {
@@ -669,6 +698,203 @@ function load(){
     state.redemptions = raw.redemptions || [];
     return true;
   } catch(e){ return false; }
+}
+
+/* =========================================================
+   2.5 云同步（GitHub Contents API）
+   ========================================================= */
+const SYNC_KEY = 'growth-plan-sync-v1';
+const syncCfg = {
+  repo: 'benjamin2006/growth-plan', branch: 'main', path: 'data/state.json',
+  token: '', auto: false, lastPush: 0
+};
+let syncTimer = null, syncBusy = false;
+
+function loadSyncCfg(){
+  try {
+    const raw = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+    if (raw) Object.assign(syncCfg, raw);
+  } catch(e){}
+}
+function saveSyncCfg(){
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch(e){}
+}
+function syncReady(){ return !!(syncCfg.repo && syncCfg.branch && syncCfg.path && syncCfg.token); }
+function syncStatus(txt, kind){
+  const el = $('cyStatus');
+  if (!el) return;
+  el.textContent = txt;
+  el.style.color = kind === 'err' ? '#b91c1c' : kind === 'ok' ? '#047857' : '';
+}
+function base64EncodeUtf8(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 4096){
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 4096));
+  }
+  return btoa(bin);
+}
+function base64DecodeUtf8(b64){
+  const bin = atob(String(b64).replace(/\s/g, ''));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function apiPath(){
+  return 'https://api.github.com/repos/' + syncCfg.repo + '/contents/' +
+    String(syncCfg.path).split('/').map(encodeURIComponent).join('/');
+}
+function apiHeaders(extra){
+  return Object.assign({
+    'Accept': 'application/vnd.github+json',
+    'Authorization': 'Bearer ' + syncCfg.token,
+    'X-GitHub-Api-Version': '2022-11-28'
+  }, extra || {});
+}
+function apiError(status){
+  if (status === 401) return '令牌无效或已过期';
+  if (status === 403) return '没有该仓库写权限（或触发了频率限制）';
+  if (status === 404) return '路径或分支不存在';
+  return 'HTTP ' + status;
+}
+async function fetchRemote(){
+  const r = await fetch(apiPath() + '?ref=' + encodeURIComponent(syncCfg.branch), { headers: apiHeaders(), cache: 'no-store' });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error('读取失败：' + apiError(r.status));
+  const j = await r.json();
+  return { sha: j.sha, text: base64DecodeUtf8(j.content || '') };
+}
+async function putRemote(text, sha){
+  const body = {
+    message: 'sync: 打卡数据 ' + new Date().toLocaleString('zh-CN', { hour12: false }),
+    content: base64EncodeUtf8(text),
+    branch: syncCfg.branch
+  };
+  if (sha) body.sha = sha;
+  const r = await fetch(apiPath(), {
+    method: 'PUT',
+    headers: apiHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body)
+  });
+  if (!r.ok){
+    const t = await r.text();
+    throw new Error('写入失败：' + apiError(r.status) + (t ? ' · ' + t.slice(0, 100) : ''));
+  }
+  const j = await r.json();
+  return j && j.content ? j.content.sha : '';
+}
+/* 合并远端：打卡/情绪/兑换取并集，项目与设置以较新一方为准 */
+function mergeRemoteState(remote){
+  if (!remote || !Array.isArray(remote.items) || !remote.items.length) return false;
+  Object.keys(remote.checks || {}).forEach(d => {
+    state.checks[d] = state.checks[d] || {};
+    Object.keys(remote.checks[d]).forEach(id => { if (!state.checks[d][id]) state.checks[d][id] = true; });
+  });
+  Object.keys(remote.moods || {}).forEach(d => {
+    if (!state.moods[d]) state.moods[d] = remote.moods[d];
+  });
+  const seen = {};
+  (state.redemptions || []).forEach(x => { if (x && x.id) seen[x.id] = 1; });
+  (remote.redemptions || []).forEach(x => {
+    if (x && x.id && !seen[x.id]) { state.redemptions.push(x); seen[x.id] = 1; }
+  });
+  if (Number(remote.updatedAt || 0) > Number(state.updatedAt || 0)){
+    if (Array.isArray(remote.items) && remote.items.length) state.items = remote.items;
+    if (Array.isArray(remote.rewards) && remote.rewards.length) state.rewards = remote.rewards;
+    if (remote.child) state.child = Object.assign({}, state.child, remote.child);
+    if (remote.schedule) state.schedule = Object.assign({}, state.schedule, remote.schedule);
+    state.adjust = Number(remote.adjust || 0);
+  }
+  state.updatedAt = Date.now();
+  return true;
+}
+function scheduleCloudPush(){
+  if (!syncCfg.auto || !syncReady() || syncBusy) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { cloudPush(true); }, 15000);
+}
+async function cloudPush(auto){
+  if (!syncReady()){ syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
+  if (syncBusy) return false;
+  syncBusy = true;
+  try {
+    if (!auto) syncStatus('正在读取仓库…');
+    const remote = await fetchRemote();
+    let sha = remote ? remote.sha : null;
+    if (remote){
+      let remoteState = null;
+      try { remoteState = JSON.parse(remote.text); } catch(e){}
+      if (remoteState && Number(remoteState.updatedAt || 0) > Number(state.updatedAt || 0)){
+        mergeRemoteState(remoteState);
+        try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+        renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
+      }
+    }
+    syncStatus(auto ? '正在自动同步…' : '正在写入仓库…');
+    sha = await putRemote(JSON.stringify(state), sha);
+    syncCfg.lastPush = Date.now();
+    saveSyncCfg();
+    syncStatus('✓ 已同步到 ' + syncCfg.repo + ' · ' + syncCfg.path + '（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
+    return true;
+  } catch(e){
+    syncStatus('同步失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+    return false;
+  } finally {
+    syncBusy = false;
+  }
+}
+async function cloudPull(auto){
+  if (!syncReady()){ syncStatus('还没配置：仓库、分支、路径、令牌都要填。', 'err'); return false; }
+  if (syncBusy) return false;
+  syncBusy = true;
+  try {
+    syncStatus('正在读取仓库…');
+    const remote = await fetchRemote();
+    if (!remote){ syncStatus('仓库里还没有 ' + syncCfg.path + '，先在打卡的设备上点「立即推送」。'); return false; }
+    let remoteState = null;
+    try { remoteState = JSON.parse(remote.text); } catch(e){ throw new Error('文件内容不是合法 JSON'); }
+    const ok = mergeRemoteState(remoteState);
+    if (!ok) throw new Error('文件里没有可用的打卡数据');
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
+    renderBrand(); renderToday(); renderWeek(); renderShop(); renderReview(); renderSettings();
+    syncStatus('✓ 已拉取并合并（' + new Date().toLocaleTimeString('zh-CN', { hour12: false }) + '）', 'ok');
+    if (!auto) toast('已从仓库拉取数据');
+    return true;
+  } catch(e){
+    syncStatus('拉取失败：' + (e && e.message ? e.message : '网络错误'), 'err');
+    return false;
+  } finally {
+    syncBusy = false;
+  }
+}
+function bindSyncUI(){
+  loadSyncCfg();
+  const set = (id, v) => { const el = $(id); if (el) el.value = v; };
+  set('cyRepo', syncCfg.repo); set('cyBranch', syncCfg.branch);
+  set('cyPath', syncCfg.path); set('cyToken', syncCfg.token);
+  const cb = $('cyAuto'); if (cb) cb.checked = !!syncCfg.auto;
+  const collect = () => {
+    syncCfg.repo = ($('cyRepo').value || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+    syncCfg.branch = ($('cyBranch').value || 'main').trim();
+    syncCfg.path = ($('cyPath').value || 'data/state.json').trim();
+    syncCfg.token = ($('cyToken').value || '').trim();
+    syncCfg.auto = !!$('cyAuto').checked;
+    saveSyncCfg();
+    if (syncReady()) syncStatus(syncCfg.auto ? '已配置，改动后 15 秒自动推送。' : '已配置，关闭了自动同步，需手动推送。');
+  };
+  ['cyRepo','cyBranch','cyPath'].forEach(id => { const el = $(id); if (el) el.addEventListener('change', collect); });
+  if ($('cyToken')) $('cyToken').addEventListener('change', collect);
+  if ($('cyAuto')) $('cyAuto').addEventListener('change', collect);
+  if ($('btnPush')) $('btnPush').addEventListener('click', () => { collect(); cloudPush(false); });
+  if ($('btnPull')) $('btnPull').addEventListener('click', () => { collect(); cloudPull(false); });
+  if ($('btnSyncClear')) $('btnSyncClear').addEventListener('click', () => {
+    syncCfg.token = ''; syncCfg.auto = false; saveSyncCfg();
+    set('cyToken', ''); if ($('cyAuto')) $('cyAuto').checked = false;
+    syncStatus('已清除令牌与自动同步（仓库、分支、路径保留）。');
+  });
+  if (syncReady()){
+    syncStatus(syncCfg.auto ? '已配置，改动后 15 秒自动推送。' : '已配置，自动同步关闭。');
+  }
 }
 
 /* =========================================================
@@ -1472,10 +1698,13 @@ $('fileList').addEventListener('click', e => {
    14. 启动
    ========================================================= */
 function boot(){
-  if (!load()){
+  loadSyncCfg();
+  const hadLocal = load();
+  if (!hadLocal){
     state.items = buildDefaultItems();
     state.rewards = buildDefaultRewards();
-    save();
+    state.updatedAt = 0;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
   }
   // 修正默认项目的分值（防御历史数据）
   state.items.forEach(it => { if (!Number(it.pts)) it.pts = 1; });
@@ -1485,6 +1714,9 @@ function boot(){
   renderShop();
   renderReview();
   renderSettings();
+  bindSyncUI();
+  // 新设备首次打开：已配置云同步就先把仓库里的记录拉下来
+  if (!hadLocal && syncReady() && syncCfg.auto) cloudPull(true);
   setInterval(() => {
     const ds = todayStr();
     if ($('todayDate') && ds !== lastDate){ lastDate = ds; renderToday(); renderWeek(); }
