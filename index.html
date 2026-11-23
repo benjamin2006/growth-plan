@@ -470,9 +470,6 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
       <div class="btnrow" style="margin-top:10px">
         <button class="btn pri" id="btnSchoolSync">立即同步</button>
       </div>
-      <div class="note" style="margin-top:8px">
-        数据来自仓库里的 <b>shenzhen-school.json</b>（含深圳市教育局校历与课后服务口径）。页面每半年自动拉一次；学校临时改时间，直接在上面「孩子与作息」里改就行，下一学期再同步覆盖。
-      </div>
     </div>
 
     <div class="setsec">
@@ -531,10 +528,10 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
     <div class="setsec" id="cloudSec">
       <h3>☁️ 云端保存 · 多设备共用</h3>
       <div class="note">
-        <b>已经内置好一个可用的存储地址，开箱即用，不用你去配置。</b>当天打卡完成点「保存今日打卡」→ 弹一道三年级算术题 → 答对才提交；哪台设备最后提交，云端当天就以此为准，其它日期不动。打开页面会自动读云端：本机今天已有记录就以本机为准，本机今天空着就用云端今天的数据。改以前的日期，用下面的「历史补录」。
+        已内置可用地址，不用配置。提交时以这次为准覆盖云端当天，其它日期不动；改以前的日期用下面的「历史补录」。
       </div>
       <div class="form" style="margin-top:10px">
-        <div class="field" style="grid-column:1/-1"><label>存储地址（默认已填好；想换成自己的再改）</label><input id="cyEndpoint" placeholder="https://getpantry.cloud/apiv1/pantry/xxxx/basket/growth" autocomplete="off"></div>
+        <div class="field" style="grid-column:1/-1"><label>存储地址（默认已填好，想换再改）</label><input id="cyEndpoint" placeholder="https://getpantry.cloud/apiv1/pantry/xxxx/basket/growth" autocomplete="off"></div>
       </div>
       <div class="btnrow">
         <button class="btn pri" id="btnSyncSave">保存这个地址</button>
@@ -544,15 +541,14 @@ table.week tfoot td{font-weight:800;background:#fbfdff;color:var(--ink)}
       </div>
       <div class="note" id="cyStatus" style="margin-top:10px">—</div>
       <div class="note" style="margin-top:8px">
-        <b>这个地址是什么：</b>getpantry.cloud 的免费公开篮子（100 个篮子、每篮 1.44 MB、不注册、不要令牌）。同一地址填到每台设备就共用同一份数据；记录谁都能读，不存敏感内容。<br>
-        <b>想换成自己的篮子：</b>打开 getpantry.cloud → 填任意邮箱 → 勾人机验证 → 「Create a Pantry」起个名 → 把返回的 ID 拼成 <span style="word-break:break-all">https://getpantry.cloud/apiv1/pantry/&lt;ID&gt;/basket/growth</span> 填进来保存即可。也兼容 api.restful-api.dev 的对象地址，或任何「GET 返回 JSON、PUT 覆盖 JSON」的地址。免费服务偶发「请求太频繁」，页面会自动重试一次。
+        getpantry.cloud 免费公开篮子（100 篮 × 1.44 MB），谁都能读，别放敏感内容。想独占一个：在 getpantry.cloud 建 pantry，把 <span style="word-break:break-all">https://getpantry.cloud/apiv1/pantry/&lt;ID&gt;/basket/growth</span> 填进来保存即可；也兼容 api.restful-api.dev 对象地址或任意「GET 读 / PUT 写 JSON」地址。免费服务偶发限流，页面会自动重试几次。
       </div>
     </div>
 
     <div class="setsec">
       <h3>🗓 历史补录 · 改以前的某一天</h3>
       <div class="note">
-        今日页只记当天。要改以前某天的记录，在这里选日期、勾选当时真正完成的项，再保存；保存到云端会覆盖那一天在云端的记录。
+        选日期 → 勾选当时真正完成的项 → 保存。只影响这一天。
       </div>
       <div class="form" style="margin-top:10px">
         <div class="field"><label>日期</label><input id="histDate" type="date"></div>
@@ -720,6 +716,26 @@ function buildDefaultRewards(){
 /* =========================================================
    2. 存储
    ========================================================= */
+/* 同一个 id 只保留第一条：历史上出现过 items 被反复合并、列表整块重复的问题 */
+function dedupeBy(arr){
+  if (!Array.isArray(arr)) return [];
+  const seen = {}; const out = [];
+  arr.forEach(x => {
+    if (!x || !x.id) return;
+    if (seen[x.id]) return;
+    seen[x.id] = 1;
+    out.push(x);
+  });
+  return out;
+}
+function normalizeArrays(){
+  /* 数组型字段统一去重，避免历史上被重复写入的条目在页面上成倍出现 */
+  state.items = dedupeBy(state.items);
+  state.rewards = dedupeBy(state.rewards);
+  state.redemptions = dedupeBy(state.redemptions);
+  const src = state.schedule && state.schedule.src;
+  if (src && Array.isArray(src.policy)) src.policy = Array.from(new Set(src.policy.filter(Boolean)));
+}
 function save(){
   state.updatedAt = Date.now();
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
@@ -736,6 +752,7 @@ function load(){
     state.checks = raw.checks || {};
     state.moods = raw.moods || {};
     state.redemptions = raw.redemptions || [];
+    normalizeArrays();
     return true;
   } catch(e){ return false; }
 }
@@ -823,13 +840,28 @@ async function putRemote(payload){
     ? JSON.stringify({ name: 'growth-plan-ben', data: payload })
     : JSON.stringify(payload);
   const opt = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
-  let r = await fetchWithRetry(syncCfg.endpoint, opt);
+  let r = null;
+  if (kind === 'pantry'){
+    /* getpantry 的 PUT 会把同名数组元素追加而不是整体覆盖（实测 items 会逐次翻倍），
+       所以走「删篮子 → POST 重建」，保证每次保存都是全量覆盖、一条不多一条不少 */
+    let delOk = false;
+    try {
+      const d = await fetchWithRetry(syncCfg.endpoint, { method: 'DELETE' });
+      delOk = d.ok;
+    } catch(e){ delOk = false; }
+    if (delOk){
+      r = await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
+    } else {
+      r = await fetchWithRetry(syncCfg.endpoint, opt);
+    }
+  } else {
+    r = await fetchWithRetry(syncCfg.endpoint, opt);
+  }
   if (!r.ok && kind === 'pantry' && r.status === 400){
     /* 篮子还不存在：先创建再写一次 */
     const t0 = await r.text();
     if (/does not exist/i.test(t0)){
-      await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
-      r = await fetchWithRetry(syncCfg.endpoint, opt);
+      r = await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
     }
   }
   if (!r.ok){
@@ -859,10 +891,11 @@ function applyRemoteState(remote){
   (remote.redemptions || []).forEach(x => {
     if (x && x.id && !seen[x.id]) { state.redemptions.push(x); seen[x.id] = 1; }
   });
-  state.items = remote.items;
-  if (Array.isArray(remote.rewards) && remote.rewards.length) state.rewards = remote.rewards;
+  state.items = dedupeBy(remote.items);
+  if (Array.isArray(remote.rewards) && remote.rewards.length) state.rewards = dedupeBy(remote.rewards);
   state.child = Object.assign({}, state.child, remote.child || {});
   state.schedule = Object.assign({}, state.schedule, remote.schedule || {});
+  normalizeArrays();
   state.adjust = Number(remote.adjust || 0);
   state.seq = Number(remote.seq || state.seq || 100);
   state.updatedAt = Number(remote.updatedAt || Date.now());
@@ -1539,8 +1572,8 @@ function renderSettings(){
     '<button class="rm" data-del-rw="' + r.id + '">×</button></div>'
   ).join('');
 
-  $('storageNote').textContent = '打卡记录 ' + Object.keys(state.checks).length + ' 天 · 兑换记录 ' +
-    state.redemptions.length + ' 条 · 本机数据先存浏览器，点「保存今日打卡」才会提交到云端。';
+  $('storageNote').textContent = '本机已记 ' + Object.keys(state.checks).length + ' 天打卡 · ' +
+    state.redemptions.length + ' 条兑换 · 附件只存本机，不上云。';
   refreshFiles();
   if ($('histList')) renderHistory();
 }
@@ -1977,6 +2010,9 @@ function boot(){
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch(e){}
   }
   // 修正默认项目的分值（防御历史数据）
+  const itemsBefore = state.items.length;
+  normalizeArrays();
+  if (state.items.length !== itemsBefore) save();
   state.items.forEach(it => { if (!Number(it.pts)) it.pts = 1; });
   renderBrand();
   renderToday();
