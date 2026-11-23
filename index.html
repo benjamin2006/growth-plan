@@ -842,23 +842,13 @@ async function putRemote(payload){
   const opt = { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body };
   let r = null;
   if (kind === 'pantry'){
-    /* getpantry 的 PUT 会把同名数组元素追加而不是整体覆盖（实测 items 会逐次翻倍），
-       所以走「删篮子 → POST 重建」，保证每次保存都是全量覆盖、一条不多一条不少 */
-    let delOk = false;
-    try {
-      const d = await fetchWithRetry(syncCfg.endpoint, { method: 'DELETE' });
-      delOk = d.ok;
-    } catch(e){ delOk = false; }
-    if (delOk){
-      r = await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
-    } else {
-      r = await fetchWithRetry(syncCfg.endpoint, opt);
-    }
+    /* 实测 getpantry：PUT 会把同名数组元素追加（items 逐次翻倍），POST 才是整份覆盖；
+       所以统一用 POST，篮子不存在时会自动创建 */
+    r = await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
   } else {
     r = await fetchWithRetry(syncCfg.endpoint, opt);
   }
   if (!r.ok && kind === 'pantry' && r.status === 400){
-    /* 篮子还不存在：先创建再写一次 */
     const t0 = await r.text();
     if (/does not exist/i.test(t0)){
       r = await fetchWithRetry(syncCfg.endpoint, Object.assign({}, opt, { method: 'POST' }));
